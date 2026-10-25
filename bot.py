@@ -12,7 +12,7 @@ from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from steam_deals import eligible_deals, render_deal
+from steam_deals import deal_image, eligible_deals, render_deal
 
 STEAM_FEATURED_URL = "https://store.steampowered.com/api/featuredcategories/"
 
@@ -66,22 +66,44 @@ def initialize_database(path: str) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS published_deals "
-            "(app_id TEXT PRIMARY KEY, published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            "(app_id TEXT PRIMARY KEY, published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "lowest_final_price INTEGER)"
         )
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(published_deals)")
+        }
+        if "lowest_final_price" not in columns:
+            connection.execute(
+                "ALTER TABLE published_deals ADD COLUMN lowest_final_price INTEGER"
+            )
 
 
-def already_published(path: str, app_id: str) -> bool:
+def should_publish(path: str, app_id: str, final_price: int) -> bool:
     with sqlite3.connect(path) as connection:
         result = connection.execute(
-            "SELECT 1 FROM published_deals WHERE app_id = ?", (app_id,)
+            "SELECT lowest_final_price FROM published_deals WHERE app_id = ?", (app_id,)
         ).fetchone()
-    return result is not None
+        if result is None:
+            return True
+        lowest_final_price = result[0]
+        if lowest_final_price is None:
+            connection.execute(
+                "UPDATE published_deals SET lowest_final_price = ? WHERE app_id = ?",
+                (final_price, app_id),
+            )
+            return False
+        return final_price < lowest_final_price
 
 
-def mark_published(path: str, app_id: str) -> None:
+def mark_published(path: str, app_id: str, final_price: int) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
-            "INSERT OR IGNORE INTO published_deals (app_id) VALUES (?)", (app_id,)
+            "INSERT INTO published_deals (app_id, lowest_final_price) VALUES (?, ?) "
+            "ON CONFLICT(app_id) DO UPDATE SET lowest_final_price = "
+            "CASE WHEN published_deals.lowest_final_price IS NULL "
+            "THEN excluded.lowest_final_price ELSE "
+            "MIN(published_deals.lowest_final_price, excluded.lowest_final_price) END",
+            (app_id, final_price),
         )
 
 
@@ -93,31 +115,74 @@ async def fetch_deals(config: Config) -> list[dict]:
         )
         response.raise_for_status()
         payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Steam вернул данные в неожиданном формате.")
     return eligible_deals(payload, config.minimum_discount)
 
 
 async def publish_deals(application: Application, config: Config) -> int:
     deals = await fetch_deals(config)
     published_count = 0
+    failed_names = []
     for deal in deals:
         app_id = str(deal["id"])
-        if already_published(config.database_path, app_id):
+        final_price = int(deal["final_price"])
+        if not should_publish(config.database_path, app_id, final_price):
             continue
+        text = render_deal(deal)
+        image = deal_image(deal)
         try:
-            await application.bot.send_message(
-                chat_id=config.channel_id,
-                text=render_deal(deal),
-                parse_mode="HTML",
-                disable_web_page_preview=False,
-            )
+            if image:
+                try:
+                    await application.bot.send_photo(
+                        chat_id=config.channel_id,
+                        photo=image,
+                        caption=text,
+                        parse_mode="HTML",
+                    )
+                except TelegramError:
+                    logging.exception(
+                        "Не удалось отправить обложку игры %s; отправляем текстом", app_id
+                    )
+                    await application.bot.send_message(
+                        chat_id=config.channel_id,
+                        text=text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=False,
+                    )
+            else:
+                await application.bot.send_message(
+                    chat_id=config.channel_id,
+                    text=text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=False,
+                )
         except TelegramError:
             logging.exception("Не удалось опубликовать предложение Steam для игры %s", app_id)
+            failed_names.append(str(deal.get("name") or app_id))
             continue
-        mark_published(config.database_path, app_id)
+        mark_published(config.database_path, app_id, final_price)
         published_count += 1
         if published_count >= config.max_posts_per_check:
             break
+    if failed_names:
+        await notify_admins(
+            application,
+            config,
+            "Не удалось опубликовать предложения в канал:\n"
+            + "\n".join(f"• {name}" for name in failed_names),
+        )
     return published_count
+
+
+async def notify_admins(
+    application: Application, config: Config, message: str
+) -> None:
+    for user_id in config.admin_user_ids:
+        try:
+            await application.bot.send_message(chat_id=user_id, text=message)
+        except TelegramError:
+            logging.exception("Не удалось отправить уведомление администратору %s", user_id)
 
 
 async def scheduled_check(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -127,6 +192,11 @@ async def scheduled_check(context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.info("Проверка Steam завершена; опубликовано предложений: %s.", count)
     except (httpx.HTTPError, ValueError):
         logging.exception("Не удалось проверить предложения Steam.")
+        await notify_admins(
+            context.application,
+            config,
+            "Не удалось проверить предложения Steam. Подробности есть в журнале GitHub Actions.",
+        )
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -155,6 +225,11 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except (httpx.HTTPError, ValueError):
         logging.exception("Не удалось вручную проверить предложения Steam.")
         await update.message.reply_text("Не удалось проверить Steam. Подробности в журнале бота.")
+        await notify_admins(
+            context.application,
+            context.application.bot_data["config"],
+            "Не удалось проверить предложения Steam. Подробности есть в журнале бота.",
+        )
         return
     await update.message.reply_text(f"Опубликовано новых предложений: {count}.")
 
@@ -184,6 +259,14 @@ def main() -> None:
             try:
                 count = await publish_deals(application, config)
                 logging.info("Проверка Steam завершена; опубликовано предложений: %s.", count)
+            except (httpx.HTTPError, ValueError):
+                logging.exception("Не удалось проверить предложения Steam.")
+                await notify_admins(
+                    application,
+                    config,
+                    "Не удалось проверить предложения Steam. Подробности есть в журнале GitHub Actions.",
+                )
+                raise
             finally:
                 await application.shutdown()
 

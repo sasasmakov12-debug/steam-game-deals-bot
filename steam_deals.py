@@ -1,6 +1,8 @@
 import html
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def eligible_deals(payload: Mapping[str, Any], minimum_discount: int = 20) -> list[dict[str, Any]]:
@@ -54,8 +56,22 @@ def render_deal(item: Mapping[str, Any]) -> str:
         final = "Бесплатно" if final_price == 0 else f"{final_price:.2f} {html.escape(currency)}"
 
     offer = "Можно забрать навсегда" if final_price == 0 else f"Скидка {discount}%"
-    return (
+    message = (
         f'🎮 <a href="https://store.steampowered.com/app/{app_id}/">{name}</a>\n'
         f"{offer}\n"
         f"<s>{original}</s> → <b>{final}</b>"
     )
+    expiration = item.get("discount_expiration")
+    if isinstance(expiration, (int, float)) and expiration > 0:
+        expiration_date = datetime.fromtimestamp(
+            expiration, tz=timezone.utc
+        ).astimezone(ZoneInfo("Europe/Moscow"))
+        message += f"\nАкция до: {expiration_date:%d.%m.%Y, %H:%M} МСК"
+    return message
+
+
+def deal_image(item: Mapping[str, Any]) -> str | None:
+    image = item.get("large_capsule_image") or item.get("header_image")
+    if isinstance(image, str) and image.startswith("https://"):
+        return image
+    return None
