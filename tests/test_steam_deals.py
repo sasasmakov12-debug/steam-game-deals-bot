@@ -30,6 +30,7 @@ class EligibleDealsTests(unittest.TestCase):
                         "original_price": 1000,
                         "final_price": 0,
                         "currency": "RUB",
+                        "discount_expiration": 1793901600,
                     },
                     {
                         "id": 12,
