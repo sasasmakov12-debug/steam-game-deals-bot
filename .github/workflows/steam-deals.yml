@@ -1,0 +1,50 @@
+name: Publish Steam deals
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: steam-deals
+  cancel-in-progress: false
+
+jobs:
+  check-deals:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Check Steam and publish deals
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          STEAM_COUNTRY_CODE: ru
+          STEAM_LANGUAGE: russian
+          DATABASE_PATH: steam_deals.sqlite3
+          MINIMUM_DISCOUNT_PERCENT: "20"
+        run: python bot.py --once
+
+      - name: Save publication history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f steam_deals.sqlite3
+          if git diff --cached --quiet; then
+            echo "Publication history is unchanged."
+          else
+            git commit -m "Update Steam deal publication history"
+            git push
+          fi

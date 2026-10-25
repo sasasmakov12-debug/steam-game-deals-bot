@@ -1,0 +1,61 @@
+import html
+from collections.abc import Mapping
+from typing import Any
+
+
+def eligible_deals(payload: Mapping[str, Any], minimum_discount: int = 20) -> list[dict[str, Any]]:
+    """Return discounted top sellers that are paid games, including paid games temporarily free."""
+    categories = payload.get("top_sellers") or {}
+    popular_items = categories.get("items", []) if isinstance(categories, Mapping) else []
+    popular_ids = {
+        str(item.get("id"))
+        for item in popular_items
+        if isinstance(item, Mapping) and item.get("id") is not None
+    }
+
+    specials = payload.get("specials") or {}
+    special_items = specials.get("items", []) if isinstance(specials, Mapping) else []
+    deals = []
+    for item in special_items:
+        if not isinstance(item, Mapping):
+            continue
+        app_id = item.get("id")
+        discount = item.get("discount_percent", 0)
+        original_price = item.get("original_price", 0)
+        final_price = item.get("final_price", 0)
+        if (
+            app_id is None
+            or not str(app_id).isdigit()
+            or str(app_id) not in popular_ids
+            or not isinstance(discount, (int, float))
+            or discount < minimum_discount
+            or not isinstance(original_price, (int, float))
+            or original_price <= 0
+            or not isinstance(final_price, (int, float))
+            or final_price < 0
+        ):
+            continue
+        deals.append(dict(item))
+    return deals
+
+
+def render_deal(item: Mapping[str, Any]) -> str:
+    app_id = html.escape(str(item["id"]), quote=True)
+    name = html.escape(str(item.get("name") or "Игра"))
+    discount = int(item.get("discount_percent", 0))
+    currency = str(item.get("currency") or "")
+    original_price = item.get("original_price", 0) / 100
+    final_price = item.get("final_price", 0) / 100
+    if currency == "RUB":
+        original = f"{original_price:,.0f} ₽".replace(",", " ")
+        final = "Бесплатно" if final_price == 0 else f"{final_price:,.0f} ₽".replace(",", " ")
+    else:
+        original = f"{original_price:.2f} {html.escape(currency)}"
+        final = "Бесплатно" if final_price == 0 else f"{final_price:.2f} {html.escape(currency)}"
+
+    offer = "Можно забрать навсегда" if final_price == 0 else f"Скидка {discount}%"
+    return (
+        f'🎮 <a href="https://store.steampowered.com/app/{app_id}/">{name}</a>\n'
+        f"{offer}\n"
+        f"<s>{original}</s> → <b>{final}</b>"
+    )
