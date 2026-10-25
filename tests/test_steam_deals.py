@@ -3,8 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot import initialize_database, mark_published, should_publish
-from steam_deals import deal_image, eligible_deals, render_deal
+from bot import (
+    initialize_database,
+    mark_missing_offers_inactive,
+    mark_published,
+    should_publish,
+)
+from steam_deals import active_special_ids, deal_image, eligible_deals, render_deal
 
 
 class EligibleDealsTests(unittest.TestCase):
@@ -56,6 +61,11 @@ class EligibleDealsTests(unittest.TestCase):
         deals = eligible_deals(self.payload)
         self.assertEqual([deal["id"] for deal in deals], [10, 11])
 
+    def test_returns_active_discounted_app_ids(self):
+        self.assertEqual(active_special_ids(self.payload), {"10", "11"})
+        self.assertEqual(active_special_ids({"specials": {"items": []}}), set())
+        self.assertIsNone(active_special_ids({}))
+
     def test_honors_minimum_discount(self):
         deals = eligible_deals(self.payload, minimum_discount=30)
         self.assertEqual([deal["id"] for deal in deals], [11])
@@ -78,13 +88,28 @@ class EligibleDealsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "deals.sqlite3")
             initialize_database(database)
-            self.assertTrue(should_publish(database, "10", 750))
-            mark_published(database, "10", 750)
-            self.assertFalse(should_publish(database, "10", 750))
-            self.assertFalse(should_publish(database, "10", 900))
-            self.assertTrue(should_publish(database, "10", 500))
-            mark_published(database, "10", 500)
-            self.assertFalse(should_publish(database, "10", 700))
+            self.assertTrue(should_publish(database, "10", 750, 1000))
+            mark_published(database, "10", 750, 1000)
+            self.assertFalse(should_publish(database, "10", 750, 1000))
+            self.assertFalse(should_publish(database, "10", 900, 1000))
+            self.assertTrue(should_publish(database, "10", 500, 1000))
+            mark_published(database, "10", 500, 1000)
+            self.assertFalse(should_publish(database, "10", 700, 1000))
+
+    def test_republishes_same_price_after_offer_disappears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "deals.sqlite3")
+            initialize_database(database)
+            mark_published(database, "10", 750, 1000)
+            mark_missing_offers_inactive(database, set())
+            self.assertTrue(should_publish(database, "10", 750, 2000))
+
+    def test_republishes_when_offer_expiration_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "deals.sqlite3")
+            initialize_database(database)
+            mark_published(database, "10", 750, 1000)
+            self.assertTrue(should_publish(database, "10", 750, 2000))
 
     def test_migrates_existing_publication_history_without_reposting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -99,8 +124,8 @@ class EligibleDealsTests(unittest.TestCase):
                     "INSERT INTO published_deals (app_id) VALUES ('10')"
                 )
             initialize_database(database)
-            self.assertFalse(should_publish(database, "10", 600))
-            self.assertTrue(should_publish(database, "10", 500))
+            self.assertFalse(should_publish(database, "10", 600, 1000))
+            self.assertTrue(should_publish(database, "10", 500, 1000))
 
 
 if __name__ == "__main__":

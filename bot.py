@@ -12,7 +12,7 @@ from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from steam_deals import deal_image, eligible_deals, render_deal
+from steam_deals import active_special_ids, deal_image, eligible_deals, render_deal
 
 STEAM_FEATURED_URL = "https://store.steampowered.com/api/featuredcategories/"
 
@@ -67,7 +67,8 @@ def initialize_database(path: str) -> None:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS published_deals "
             "(app_id TEXT PRIMARY KEY, published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
-            "lowest_final_price INTEGER)"
+            "lowest_final_price INTEGER, last_offer_expiration INTEGER, "
+            "offer_active INTEGER NOT NULL DEFAULT 1)"
         )
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(published_deals)")
@@ -76,38 +77,81 @@ def initialize_database(path: str) -> None:
             connection.execute(
                 "ALTER TABLE published_deals ADD COLUMN lowest_final_price INTEGER"
             )
+        if "last_offer_expiration" not in columns:
+            connection.execute(
+                "ALTER TABLE published_deals ADD COLUMN last_offer_expiration INTEGER"
+            )
+        if "offer_active" not in columns:
+            connection.execute(
+                "ALTER TABLE published_deals ADD COLUMN offer_active "
+                "INTEGER NOT NULL DEFAULT 1"
+            )
 
 
-def should_publish(path: str, app_id: str, final_price: int) -> bool:
+def mark_missing_offers_inactive(path: str, active_app_ids: set[str]) -> None:
+    with sqlite3.connect(path) as connection:
+        if active_app_ids:
+            placeholders = ",".join("?" for _ in active_app_ids)
+            connection.execute(
+                f"UPDATE published_deals SET offer_active = 0 "
+                f"WHERE app_id NOT IN ({placeholders})",
+                tuple(active_app_ids),
+            )
+        else:
+            connection.execute("UPDATE published_deals SET offer_active = 0")
+
+
+def should_publish(
+    path: str, app_id: str, final_price: int, offer_expiration: int | None
+) -> bool:
     with sqlite3.connect(path) as connection:
         result = connection.execute(
-            "SELECT lowest_final_price FROM published_deals WHERE app_id = ?", (app_id,)
+            "SELECT lowest_final_price, last_offer_expiration, offer_active "
+            "FROM published_deals WHERE app_id = ?",
+            (app_id,),
         ).fetchone()
         if result is None:
             return True
-        lowest_final_price = result[0]
+        lowest_final_price, last_offer_expiration, offer_active = result
+        if not offer_active or (
+            offer_expiration is not None
+            and last_offer_expiration is not None
+            and offer_expiration != last_offer_expiration
+        ):
+            return True
         if lowest_final_price is None:
             connection.execute(
-                "UPDATE published_deals SET lowest_final_price = ? WHERE app_id = ?",
-                (final_price, app_id),
+                "UPDATE published_deals SET lowest_final_price = ?, "
+                "last_offer_expiration = ? WHERE app_id = ?",
+                (final_price, offer_expiration, app_id),
             )
             return False
+        if last_offer_expiration is None and offer_expiration is not None:
+            connection.execute(
+                "UPDATE published_deals SET last_offer_expiration = ? WHERE app_id = ?",
+                (offer_expiration, app_id),
+            )
         return final_price < lowest_final_price
 
 
-def mark_published(path: str, app_id: str, final_price: int) -> None:
+def mark_published(
+    path: str, app_id: str, final_price: int, offer_expiration: int | None
+) -> None:
     with sqlite3.connect(path) as connection:
         connection.execute(
-            "INSERT INTO published_deals (app_id, lowest_final_price) VALUES (?, ?) "
+            "INSERT INTO published_deals "
+            "(app_id, lowest_final_price, last_offer_expiration, offer_active) "
+            "VALUES (?, ?, ?, 1) "
             "ON CONFLICT(app_id) DO UPDATE SET lowest_final_price = "
             "CASE WHEN published_deals.lowest_final_price IS NULL "
             "THEN excluded.lowest_final_price ELSE "
-            "MIN(published_deals.lowest_final_price, excluded.lowest_final_price) END",
-            (app_id, final_price),
+            "MIN(published_deals.lowest_final_price, excluded.lowest_final_price) END, "
+            "last_offer_expiration = excluded.last_offer_expiration, offer_active = 1",
+            (app_id, final_price, offer_expiration),
         )
 
 
-async def fetch_deals(config: Config) -> list[dict]:
+async def fetch_deals(config: Config) -> tuple[list[dict], set[str] | None]:
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.get(
             STEAM_FEATURED_URL,
@@ -117,17 +161,23 @@ async def fetch_deals(config: Config) -> list[dict]:
         payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("Steam вернул данные в неожиданном формате.")
-    return eligible_deals(payload, config.minimum_discount)
+    return eligible_deals(payload, config.minimum_discount), active_special_ids(payload)
 
 
 async def publish_deals(application: Application, config: Config) -> int:
-    deals = await fetch_deals(config)
+    deals, active_app_ids = await fetch_deals(config)
+    if active_app_ids is not None:
+        mark_missing_offers_inactive(config.database_path, active_app_ids)
     published_count = 0
     failed_names = []
     for deal in deals:
         app_id = str(deal["id"])
         final_price = int(deal["final_price"])
-        if not should_publish(config.database_path, app_id, final_price):
+        expiration = deal.get("discount_expiration")
+        offer_expiration = int(expiration) if isinstance(expiration, (int, float)) else None
+        if not should_publish(
+            config.database_path, app_id, final_price, offer_expiration
+        ):
             continue
         text = render_deal(deal)
         image = deal_image(deal)
@@ -161,7 +211,7 @@ async def publish_deals(application: Application, config: Config) -> int:
             logging.exception("Не удалось опубликовать предложение Steam для игры %s", app_id)
             failed_names.append(str(deal.get("name") or app_id))
             continue
-        mark_published(config.database_path, app_id, final_price)
+        mark_published(config.database_path, app_id, final_price, offer_expiration)
         published_count += 1
         if published_count >= config.max_posts_per_check:
             break

@@ -5,6 +5,21 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 
+def active_special_ids(payload: Mapping[str, Any]) -> set[str] | None:
+    specials = payload.get("specials")
+    if not isinstance(specials, Mapping) or not isinstance(specials.get("items"), list):
+        return None
+    items = specials["items"]
+    return {
+        str(item["id"])
+        for item in items
+        if isinstance(item, Mapping)
+        and item.get("id") is not None
+        and str(item["id"]).isdigit()
+        and item.get("discounted") is True
+    }
+
+
 def eligible_deals(payload: Mapping[str, Any], minimum_discount: int = 20) -> list[dict[str, Any]]:
     """Вернуть популярные платные игры со скидкой, в том числе временно бесплатные."""
     categories = payload.get("top_sellers") or {}
