@@ -34,13 +34,15 @@ def load_config() -> Config:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
     if not token or not channel_id:
-        raise ValueError("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID in the environment.")
+        raise ValueError("Укажите TELEGRAM_BOT_TOKEN и TELEGRAM_CHANNEL_ID в настройках окружения.")
 
     interval = int(os.environ.get("CHECK_INTERVAL_MINUTES", "30"))
     minimum_discount = int(os.environ.get("MINIMUM_DISCOUNT_PERCENT", "20"))
     max_posts = int(os.environ.get("MAX_POSTS_PER_CHECK", "10"))
     if interval < 1 or not 0 <= minimum_discount <= 100 or max_posts < 1:
-        raise ValueError("Check interval, minimum discount, or maximum posts is out of range.")
+        raise ValueError(
+            "Проверьте интервал проверки, минимальный размер скидки и число публикаций."
+        )
 
     admin_ids = frozenset(
         int(value.strip())
@@ -109,7 +111,7 @@ async def publish_deals(application: Application, config: Config) -> int:
                 disable_web_page_preview=False,
             )
         except TelegramError:
-            logging.exception("Failed to publish Steam deal for app %s", app_id)
+            logging.exception("Не удалось опубликовать предложение Steam для игры %s", app_id)
             continue
         mark_published(config.database_path, app_id)
         published_count += 1
@@ -122,9 +124,9 @@ async def scheduled_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     config: Config = context.application.bot_data["config"]
     try:
         count = await publish_deals(context.application, config)
-        logging.info("Steam deal check completed; published %s deal(s).", count)
+        logging.info("Проверка Steam завершена; опубликовано предложений: %s.", count)
     except (httpx.HTTPError, ValueError):
-        logging.exception("Steam deal check failed.")
+        logging.exception("Не удалось проверить предложения Steam.")
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -151,7 +153,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             context.application, context.application.bot_data["config"]
         )
     except (httpx.HTTPError, ValueError):
-        logging.exception("Manual Steam deal check failed.")
+        logging.exception("Не удалось вручную проверить предложения Steam.")
         await update.message.reply_text("Не удалось проверить Steam. Подробности в журнале бота.")
         return
     await update.message.reply_text(f"Опубликовано новых предложений: {count}.")
@@ -162,7 +164,7 @@ def main() -> None:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Check Steam and publish deals once, then exit.",
+        help="Проверить Steam, опубликовать предложения и завершить работу.",
     )
     args = parser.parse_args()
     load_dotenv()
@@ -181,7 +183,7 @@ def main() -> None:
             await application.initialize()
             try:
                 count = await publish_deals(application, config)
-                logging.info("Steam deal check completed; published %s deal(s).", count)
+                logging.info("Проверка Steam завершена; опубликовано предложений: %s.", count)
             finally:
                 await application.shutdown()
 

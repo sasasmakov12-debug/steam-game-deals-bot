@@ -4,7 +4,7 @@ from typing import Any
 
 
 def eligible_deals(payload: Mapping[str, Any], minimum_discount: int = 20) -> list[dict[str, Any]]:
-    """Return discounted top sellers that are paid games, including paid games temporarily free."""
+    """Вернуть популярные платные игры со скидкой, в том числе временно бесплатные."""
     categories = payload.get("top_sellers") or {}
     popular_items = categories.get("items", []) if isinstance(categories, Mapping) else []
     popular_ids = {

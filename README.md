@@ -1,26 +1,26 @@
-# Steam deals Telegram bot
+# Бот Telegram-канала со скидками на игры Steam
 
-The bot checks Steam's featured categories every 30 minutes and posts discounted games that also appear in Steam's top sellers. It includes temporary free promotions for paid games when Steam reports them as a 100% discount. The SQLite database prevents the same game from being posted twice.
+Бот каждые 30 минут проверяет подборки Steam и публикует скидки на популярные игры, которые также входят в список лидеров продаж. Он находит и временные раздачи платных игр со скидкой 100%. База SQLite не позволяет публиковать одну и ту же игру повторно.
 
-The Steam Store endpoint does not expose a definitive "counts toward the Game Collector badge" field. This bot uses a practical filter: it excludes games with no original price, and includes paid titles discounted to zero. This is an approximation of Steam's badge eligibility, not a guarantee for every title or account.
+Steam не предоставляет через используемый интерфейс точное поле о том, засчитывается ли игра для значка «Коллекционер игр». Поэтому бот использует приближённый фильтр: исключает игры без исходной цены и включает платные игры, временно ставшие бесплатными. Это не гарантирует соответствие требованиям значка для каждой игры или аккаунта.
 
-## Run locally
+## Запуск на компьютере
 
-1. Install Python 3.11 or newer.
-2. Install dependencies with `python -m pip install -r requirements.txt`.
-3. Copy `.env.example` to `.env`, then set the Telegram bot token and channel ID. The bot must be an administrator of the channel with permission to post.
-4. Optionally set `ADMIN_USER_IDS` to comma-separated Telegram user IDs allowed to use `/check`.
-5. Run `python bot.py`. The bot loads settings from `.env` in the current directory. Use `python bot.py --once` to perform a single check.
+1. Установите Python версии 3.11 или новее.
+2. Установите зависимости командой `python -m pip install -r requirements.txt`.
+3. Скопируйте `.env.example` в `.env` и укажите токен Telegram-бота и ID канала. Добавьте бота в канал администратором с правом публиковать сообщения.
+4. При необходимости укажите в `ADMIN_USER_IDS` ID администраторов Telegram через запятую — им будет доступна команда `/check`.
+5. Запустите `python bot.py`. Настройки будут загружены из файла `.env` в текущей папке. Чтобы выполнить одну проверку и завершить работу, запустите `python bot.py --once`.
 
-## Host on GitHub Actions
+## Запуск на GitHub Actions
 
-1. Create a Telegram bot with [@BotFather](https://t.me/BotFather), add it as an administrator to your channel, and allow it to post messages.
-2. In the GitHub repository, open **Settings → Secrets and variables → Actions** and add these repository secrets:
-   - `TELEGRAM_BOT_TOKEN`: the bot token from BotFather.
-   - `TELEGRAM_CHANNEL_ID`: the channel username such as `@your_channel`, or its numeric chat ID.
-3. In **Settings → Actions → General → Workflow permissions**, allow read and write access. The workflow needs this to save its SQLite publication history and prevent duplicate posts.
-4. Enable Actions for the repository. The scheduled workflow checks every 30 minutes; you can also start it from **Actions → Publish Steam deals → Run workflow**.
+1. Создайте бота через [@BotFather](https://t.me/BotFather), добавьте его в канал администратором и разрешите публикацию сообщений.
+2. В репозитории GitHub откройте **Параметры → Секреты и переменные → Actions** и добавьте секреты репозитория:
+   - `TELEGRAM_BOT_TOKEN` — токен бота от BotFather.
+   - `TELEGRAM_CHANNEL_ID` — имя канала, например `@имя_канала`, или его числовой ID.
+3. Откройте **Параметры → Actions → Общие → Разрешения рабочего процесса** и разрешите чтение и запись. Это нужно сценарию, чтобы сохранять историю публикаций в SQLite и не размещать повторы.
+4. Включите Actions для репозитория. Автоматическая проверка выполняется каждые 30 минут. Запустить её вручную можно через **Actions → Публикация скидок Steam → Запустить рабочий процесс**.
 
-GitHub Actions runs each check on a fresh runner. The workflow commits the small SQLite publication-history file to the private repository after a run, so later runs remember which games were already posted. GitHub's scheduled workflows may start later than the requested time during periods of high load.
+Каждая проверка GitHub Actions выполняется на новом временном сервере. После проверки сценарий сохраняет небольшой файл истории SQLite в приватный репозиторий, чтобы следующие запуски помнили, какие игры уже опубликованы. При высокой нагрузке GitHub может запускать задачи по расписанию с задержкой.
 
-The bot also supports `/start` and an administrator-only `/check` when run in polling mode locally.
+При локальном запуске в режиме постоянного опроса Telegram бот также поддерживает команду `/start` и команду `/check`, доступную только администраторам, указанным в `ADMIN_USER_IDS`.

@@ -11,7 +11,7 @@ class EligibleDealsTests(unittest.TestCase):
                 "items": [
                     {
                         "id": 10,
-                        "name": "Discounted",
+                        "name": "Со скидкой",
                         "discount_percent": 25,
                         "original_price": 1000,
                         "final_price": 750,
@@ -19,7 +19,7 @@ class EligibleDealsTests(unittest.TestCase):
                     },
                     {
                         "id": 11,
-                        "name": "Free for a limited time",
+                        "name": "Временно бесплатно",
                         "discount_percent": 100,
                         "original_price": 1000,
                         "final_price": 0,
@@ -27,7 +27,7 @@ class EligibleDealsTests(unittest.TestCase):
                     },
                     {
                         "id": 12,
-                        "name": "Free-to-play",
+                        "name": "Бесплатная игра",
                         "discount_percent": 0,
                         "original_price": 0,
                         "final_price": 0,
@@ -35,7 +35,7 @@ class EligibleDealsTests(unittest.TestCase):
                     },
                     {
                         "id": 13,
-                        "name": "Not popular",
+                        "name": "Не в списке популярных",
                         "discount_percent": 50,
                         "original_price": 1000,
                         "final_price": 500,
