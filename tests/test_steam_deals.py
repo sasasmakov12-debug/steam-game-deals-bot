@@ -21,6 +21,7 @@ class EligibleDealsTests(unittest.TestCase):
                     {
                         "id": 10,
                         "name": "Со скидкой",
+                        "discounted": True,
                         "discount_percent": 25,
                         "original_price": 1000,
                         "final_price": 750,
@@ -31,6 +32,7 @@ class EligibleDealsTests(unittest.TestCase):
                     {
                         "id": 11,
                         "name": "Временно бесплатно",
+                        "discounted": True,
                         "discount_percent": 100,
                         "original_price": 1000,
                         "final_price": 0,
@@ -40,6 +42,7 @@ class EligibleDealsTests(unittest.TestCase):
                     {
                         "id": 12,
                         "name": "Бесплатная игра",
+                        "discounted": False,
                         "discount_percent": 0,
                         "original_price": 0,
                         "final_price": 0,
@@ -48,6 +51,7 @@ class EligibleDealsTests(unittest.TestCase):
                     {
                         "id": 13,
                         "name": "Не в списке популярных",
+                        "discounted": True,
                         "discount_percent": 50,
                         "original_price": 1000,
                         "final_price": 500,
@@ -62,7 +66,7 @@ class EligibleDealsTests(unittest.TestCase):
         self.assertEqual([deal["id"] for deal in deals], [10, 11])
 
     def test_returns_active_discounted_app_ids(self):
-        self.assertEqual(active_special_ids(self.payload), {"10", "11"})
+        self.assertEqual(active_special_ids(self.payload), {"10", "11", "13"})
         self.assertEqual(active_special_ids({"specials": {"items": []}}), set())
         self.assertIsNone(active_special_ids({}))
 
@@ -102,7 +106,7 @@ class EligibleDealsTests(unittest.TestCase):
             initialize_database(database)
             mark_published(database, "10", 750, 1000)
             mark_missing_offers_inactive(database, set())
-            self.assertTrue(should_publish(database, "10", 750, 2000))
+            self.assertTrue(should_publish(database, "10", 750, 1000))
 
     def test_republishes_when_offer_expiration_changes(self):
         with tempfile.TemporaryDirectory() as directory:
